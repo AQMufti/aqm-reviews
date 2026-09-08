@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.13.0
+ * Version:     1.14.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.13.0' );
+define( 'AQM_REV_VERSION', '1.14.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -2794,9 +2794,29 @@ function aqm_rev_styles() {
 		animation-timing-function:linear;animation-iteration-count:infinite}
 	@keyframes aqm-rev-marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 
-	/* Stop while it is being read - pointer inside, or keyboard focus on a card. */
-	.aqm-rev .aqm-rev-strip:hover .aqm-rev-track,
-	.aqm-rev .aqm-rev-strip:focus-within .aqm-rev-track{animation-play-state:paused}
+	/* Stop while it is being read - pointer inside the strip. */
+	.aqm-rev .aqm-rev-strip:hover .aqm-rev-track{animation-play-state:paused}
+
+	/*
+	 * KEYBOARD FOCUS PAUSES IT. A MOUSE CLICK MUST NOT.
+	 *
+	 * This was :focus-within until 1.14.0, and that stopped the strip for
+	 * good. Every card opens Google in a NEW TAB, so after a click the link
+	 * keeps focus in the tab left behind; :focus-within went on matching, the
+	 * animation stayed paused, and nothing short of a reload started it again
+	 * - moving the mouse could not help, because the cause was focus, not
+	 * hover. Reported 8 Sep 2026 and reproduced exactly: focus a card and the
+	 * computed animation-play-state goes to "paused" and stays there.
+	 *
+	 * :focus-visible is the distinction that was wanted all along - a keyboard
+	 * user tabbing to a card, not a mouse click. Kept as its OWN rule rather
+	 * than a second selector on the line above: :has() is widely supported but
+	 * not universally, and a browser that does not know it drops the whole
+	 * rule it appears in. On its own, the worst case is that keyboard focus
+	 * stops pausing; grouped, the worst case would be losing the hover pause
+	 * as well.
+	 */
+	.aqm-rev .aqm-rev-strip:has(:focus-visible) .aqm-rev-track{animation-play-state:paused}
 
 	.aqm-rev .aqm-rev-slide{flex:0 0 auto;padding:0 8px;display:flex}
 	.aqm-rev .aqm-rev-card{display:flex;flex-direction:column;gap:10px;width:100%;
