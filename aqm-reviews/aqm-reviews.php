@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.1.0
+ * Version:     1.2.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -70,7 +70,7 @@ defined( 'ABSPATH' ) || exit;
  * function below would be declared twice and the site would fatal. Bail out
  * instead, and say why on the Plugins screen.
  */
-if ( function_exists( 'aqm_rev_table' ) ) {
+if ( file_exists( ( defined( 'WPMU_PLUGIN_DIR' ) ? WPMU_PLUGIN_DIR : WP_CONTENT_DIR . '/mu-plugins' ) . '/aqm-reviews.php' ) ) {
 	add_action(
 		'admin_notices',
 		function () {
@@ -82,8 +82,38 @@ if ( function_exists( 'aqm_rev_table' ) ) {
 	return;
 }
 
+/*
+ * Belt and braces. The mu-plugin file is gone, but something else has already
+ * declared our symbols - so loading on would be a fatal redeclare. Bail out
+ * quietly and report WHERE it came from, using reflection, rather than blaming
+ * a file that is not there.
+ *
+ * Version 1.1.0 tested only function_exists( 'aqm_rev_table' ), which is a
+ * PROXY for "the old file is still present" rather than the thing itself. When
+ * the four files were deleted on 8 Sep 2026 the notices kept firing, because
+ * the proxy was answering a different question. Test the actual condition.
+ */
+if ( function_exists( 'aqm_rev_table' ) ) {
+	add_action(
+		'admin_notices',
+		function () {
+			$where = 'an unknown file';
+			try {
+				$r     = new ReflectionFunction( 'aqm_rev_table' );
+				$where = '<code>' . esc_html( str_replace( ABSPATH, '', (string) $r->getFileName() ) ) . '</code>';
+			} catch ( Exception $e ) {
+				unset( $e );
+			}
+			echo '<div class="notice notice-warning"><p><strong>AQM Reviews</strong> stood down to avoid a duplicate declaration. '
+				. 'Something already defined <code>aqm_rev_table</code>, loaded from ' . $where . '. '
+				. 'No must-use copy is present, so this is not the old file.</p></div>';
+		}
+	);
+	return;
+}
+
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.1.0' );
+define( 'AQM_REV_VERSION', '1.2.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
