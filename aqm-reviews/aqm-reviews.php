@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.5.0
+ * Version:     1.6.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.5.0' );
+define( 'AQM_REV_VERSION', '1.6.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -154,6 +154,20 @@ function aqm_rev_profile() {
 		'box_height'    => 0,
 		'box_font'      => 15,
 		'box_photo'     => 88,
+		/*
+		 * Which element the floating badge must never cover.
+		 *
+		 * The float is position:fixed, so it sits over whatever happens to be
+		 * at the bottom of the viewport - and at the end of a page that is the
+		 * footer. On 8 Sep 2026 it was covering the RECO brokerage
+		 * identification line, which is a compliance problem, not a cosmetic
+		 * one. A positioned element with a higher z-index paints OVER a fixed
+		 * one, so raising the footer is enough; no JavaScript, no scroll
+		 * listener, and nothing that can silently stop working.
+		 *
+		 * Empty disables the rule entirely.
+		 */
+		'footer_sel'    => 'footer, .elementor-location-footer, .site-footer, .aqm-brokerage-id',
 	);
 	$saved   = get_option( 'aqm_reviews_profile', array() );
 	$profile = array_merge( $defaults, is_array( $saved ) ? $saved : array() );
@@ -1316,6 +1330,21 @@ function aqm_rev_screen_profile() {
 		(int) $profile['box_height']
 	);
 	printf(
+		'<tr><th>Keep above the badge</th><td>'
+		. '<input name="footer_sel" type="text" value="%s" class="regular-text" style="max-width:520px">'
+		. '<p class="description">The floating badge is pinned to the bottom of the screen, so at the '
+		. 'end of a page it lands on the footer &mdash; which is where the RECO brokerage line lives. '
+		. 'Anything matching this selector is painted <strong>above</strong> the badge instead, so the '
+		. 'badge tucks behind it. No JavaScript is involved.<br>'
+		. 'If the badge still shows through, that element has no background of its own &mdash; give the '
+		. 'footer a solid background colour in Elementor. Empty this box to switch the rule off.<br>'
+		. '<em>Child combinators (&gt;) are stripped for safety, since they could close the style block. '
+		. 'Use a descendant selector instead &mdash; <code>.site-footer div</code> rather than '
+		. '<code>.site-footer &gt; div</code>.</em></p>'
+		. '</td></tr>',
+		esc_attr( $profile['footer_sel'] )
+	);
+	printf(
 		'<tr><th>Text size</th><td>'
 		. '<input name="box_font" type="number" min="10" max="30" value="%d" class="small-text"> px'
 		. '<p class="description">15 is the default. Stars and the Google mark scale with it, so '
@@ -1657,6 +1686,9 @@ add_action(
 				'box_photo'     => isset( $_POST['box_photo'] )
 					? max( 24, min( 240, absint( wp_unslash( $_POST['box_photo'] ) ) ) )
 					: 88,
+				'footer_sel'    => isset( $_POST['footer_sel'] )
+					? aqm_rev_safe_selector( wp_unslash( $_POST['footer_sel'] ) )
+					: '',
 			),
 			false
 		);
@@ -2575,6 +2607,7 @@ function aqm_rev_styles() {
 	</style>
 	<?php
 	aqm_rev_size_styles();
+	aqm_rev_footer_stack_css();
 	// No JavaScript is printed. The badge is a link, not a disclosure widget:
 	// one click goes straight to Google, so there is nothing to toggle.
 }
@@ -2592,6 +2625,50 @@ function aqm_rev_styles() {
  * 0 for width or height means "fit the content", which is what the badge did
  * before any of it was adjustable.
  */
+/**
+ * A CSS selector list, safe to drop inside a <style> block.
+ *
+ * This value reaches the page unescaped by necessity - a selector cannot be
+ * esc_attr'd and still work - so everything that could end the rule, end the
+ * style element, or start a new declaration is removed rather than encoded.
+ */
+function aqm_rev_safe_selector( $raw ) {
+	$sel = preg_replace( '/[^A-Za-z0-9 ,.\#_\-\[\]=":()>+~*]/', '', (string) $raw );
+	$sel = str_replace( array( '{', '}', ';', '<', '>' ), '', $sel );
+	return trim( preg_replace( '/\s+/', ' ', $sel ) );
+}
+
+/**
+ * Keep the footer above the floating badge.
+ *
+ * Printed only when the float is actually on the page - there is nothing to
+ * stack against otherwise.
+ */
+function aqm_rev_footer_stack_css() {
+
+	$profile = aqm_rev_profile();
+	$sel     = aqm_rev_safe_selector( $profile['footer_sel'] );
+
+	if ( '' === $sel ) {
+		return;
+	}
+
+	/**
+	 * Filter the selector the float must stay behind.
+	 *
+	 * @param string $sel Comma-separated CSS selector list.
+	 */
+	$sel = aqm_rev_safe_selector( apply_filters( 'aqm_rev_footer_selector', $sel ) );
+	if ( '' === $sel ) {
+		return;
+	}
+
+	printf(
+		'<style id="aqm-rev-footer-stack">%s{position:relative;z-index:9991}</style>' . "\n",
+		$sel // phpcs:ignore WordPress.Security.EscapeOutput -- sanitised above; a selector cannot be escaped and still function.
+	);
+}
+
 function aqm_rev_size_styles() {
 
 	$profile = aqm_rev_profile();
