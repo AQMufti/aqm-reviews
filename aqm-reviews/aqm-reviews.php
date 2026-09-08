@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.4.0
+ * Version:     1.5.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.4.0' );
+define( 'AQM_REV_VERSION', '1.5.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
