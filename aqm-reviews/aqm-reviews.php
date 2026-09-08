@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.8.0
+ * Version:     1.9.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.8.0' );
+define( 'AQM_REV_VERSION', '1.9.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -175,6 +175,9 @@ function aqm_rev_profile() {
 		// Hide the floating bar once the footer is on screen. Costs a few lines
 		// of JavaScript; see aqm_rev_float_hide_js() for why that is worth it.
 		'float_hide'    => 1,
+		// Distance from the corner, in pixels. 20 is the design default; a
+		// floating chat button in the same corner needs roughly 90 to clear it.
+		'float_gap'     => 20,
 	);
 	$saved   = get_option( 'aqm_reviews_profile', array() );
 	$profile = array_merge( $defaults, is_array( $saved ) ? $saved : array() );
@@ -1354,6 +1357,18 @@ function aqm_rev_screen_profile() {
 		selected( 'transparent', $profile['box_bg'], false )
 	);
 	printf(
+		'<tr><th>Distance from the corner</th><td>'
+		. '<input name="float_gap" type="number" min="0" max="400" step="2" value="%d" '
+		. 'class="small-text"> px'
+		. '<p class="description">How far the floating bar sits from the left or right edge. '
+		. '<strong>20</strong> is the design default.<br>'
+		. 'If a chat button shares the same corner the two overlap &mdash; a WhatsApp bubble is about '
+		. '70px wide, so <strong>90</strong> clears it with a little air. The bar keeps its distance '
+		. 'from the bottom either way, because lifting it would push it over the page content '
+		. 'instead.</p></td></tr>',
+		(int) $profile['float_gap']
+	);
+	printf(
 		'<tr><th>Hide at the footer</th><td>'
 		. '<label><input type="checkbox" name="float_hide" value="1"%s> '
 		. 'Get out of the way when the footer comes into view</label>'
@@ -1730,6 +1745,9 @@ add_action(
 					? 'transparent'
 					: 'solid',
 				'float_hide'    => isset( $_POST['float_hide'] ) ? 1 : 0,
+				'float_gap'     => isset( $_POST['float_gap'] )
+					? min( 400, absint( wp_unslash( $_POST['float_gap'] ) ) )
+					: 20,
 			),
 			false
 		);
@@ -2864,6 +2882,25 @@ function aqm_rev_size_styles() {
 	// Padding (10px top and bottom) and the 1px border on each edge.
 	$float_pad  = 22;
 	$float_face = max( 24, $float_h - $float_pad );
+
+	/*
+	 * Distance from the corner.
+	 *
+	 * The bar defaults to the LEFT because a chat button usually owns the
+	 * right. When it is put on the right anyway - which is a perfectly
+	 * reasonable choice - the two land on top of each other, so the gap has to
+	 * be adjustable rather than a fixed 20px. Applied to the horizontal side
+	 * only: the bottom stays put, because raising the bar would push it over
+	 * page content instead.
+	 */
+	$gap  = max( 0, (int) $profile['float_gap'] );
+	$css .= sprintf(
+		'.aqm-rev-floatwrap.aqm-rev-float-left{left:%1$dpx}'
+		. '.aqm-rev-floatwrap.aqm-rev-float-right{right:%1$dpx}'
+		. '.aqm-rev-floatwrap{max-width:calc(100%% - %2$dpx)}',
+		$gap,
+		max( 40, $gap + 20 )
+	);
 
 	$css .= sprintf(
 		// Both children of the bar get the SAME explicit height.
