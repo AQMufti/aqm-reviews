@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.6.0
+ * Version:     1.7.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.6.0' );
+define( 'AQM_REV_VERSION', '1.7.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -1323,7 +1323,11 @@ function aqm_rev_screen_profile() {
 		'<tr><th>Height</th><td>'
 		. '<input name="box_height" type="number" min="0" max="600" step="10" value="%d" '
 		. 'class="small-text"> px'
-		. '<p class="description"><strong>0 = fit the content.</strong> A number sets a minimum, '
+		. '<p class="description"><strong>0 = fit the content.</strong> A number sets a minimum for a '
+		. 'badge placed in page content. <strong>For the floating corner bar it is exact</strong> &mdash; the '
+		. 'badge and every card are set to this height and the photo shrinks to fit, so they always match. '
+		. 'The float will not go below 56px, since the stars stop being readable. About 120px suits three '
+		. 'cards with a line or two of review text. '
 		. 'so a short review and a long one make boxes the same size. Set it too low and a long '
 		. 'review is clipped &mdash; lower <em>Words per card</em> above rather than fighting it '
 		. 'here.</p></td></tr>',
@@ -2720,13 +2724,47 @@ function aqm_rev_size_styles() {
 	// tall ones. The badge's height is its photo plus its padding and border,
 	// unless a height has been set, in which case that wins. CSS cannot measure
 	// a sibling, so the number is worked out here and written in.
-	$badge_h = $height ? $height : $photo + 30;
-	$css    .= sprintf(
-		'.aqm-rev-floatwrap .aqm-rev-strip{height:%dpx}'
-		. '.aqm-rev-floatwrap .aqm-rev-slide{align-items:stretch}'
-		. '.aqm-rev-floatwrap .aqm-rev-card{height:100%%;overflow:hidden;gap:6px;padding:10px 14px}'
-		. '.aqm-rev-floatwrap .aqm-rev-cardtext{font-size:%dpx;line-height:1.4}',
-		$badge_h,
+	/*
+	 * In the corner, HEIGHT IS AUTHORITATIVE FOR BOTH BOXES.
+	 *
+	 * Until 1.7.0 the height was a fixed height on the review strip but only a
+	 * min-height on the badge, and the badge's real height came from its photo
+	 * plus padding. Setting a height below that left the badge tall and the
+	 * cards short - they could only match by coincidence. The photo now shrinks
+	 * to fit the height instead of dictating it, so the bar is one consistent
+	 * band whatever the number.
+	 *
+	 * A floor of 56px applies to the float only. Below that the stars and text
+	 * are unreadable and the badge stops being a link anyone can hit; an
+	 * in-page badge is left alone, because there the height is a minimum and
+	 * the content is allowed to win.
+	 */
+	$float_h = $height ? max( 56, $height ) : $photo + 30;
+
+	// Padding (10px top and bottom) and the 1px border on each edge.
+	$float_pad  = 22;
+	$float_face = max( 24, $float_h - $float_pad );
+
+	$css .= sprintf(
+		// Both children of the bar get the SAME explicit height.
+		'.aqm-rev-floatwrap .aqm-rev-badge{height:%1$dpx;min-height:0;'
+		. 'padding:10px 14px;box-sizing:border-box}'
+		. '.aqm-rev-floatwrap .aqm-rev-strip{height:%1$dpx}'
+		// The photo fits the band rather than setting it.
+		. '.aqm-rev-floatwrap .aqm-rev-avatar{height:auto;max-height:100%%;width:auto}'
+		. '.aqm-rev-floatwrap .aqm-rev-avatar-fallback{width:%2$dpx;height:%2$dpx;'
+		. 'flex:0 0 %2$dpx;font-size:%3$dpx}'
+		// Cards fill the band exactly, and clip rather than push it taller.
+		. '.aqm-rev-floatwrap .aqm-rev-scroll{align-items:stretch}'
+		. '.aqm-rev-floatwrap .aqm-rev-track{height:100%%}'
+		. '.aqm-rev-floatwrap .aqm-rev-slide{align-items:stretch;height:100%%}'
+		. '.aqm-rev-floatwrap .aqm-rev-card{height:100%%;box-sizing:border-box;'
+		. 'overflow:hidden;gap:6px;padding:10px 14px}'
+		. '.aqm-rev-floatwrap .aqm-rev-cardtext{font-size:%4$dpx;line-height:1.4;'
+		. 'overflow:hidden}',
+		$float_h,
+		$float_face,
+		max( 10, (int) round( $float_face / 2.9 ) ),
 		max( 11, (int) round( $font * 0.88 ) )
 	);
 
