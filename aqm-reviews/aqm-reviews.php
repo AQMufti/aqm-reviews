@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.7.0
+ * Version:     1.8.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.7.0' );
+define( 'AQM_REV_VERSION', '1.8.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -168,6 +168,13 @@ function aqm_rev_profile() {
 		 * Empty disables the rule entirely.
 		 */
 		'footer_sel'    => 'footer, .elementor-location-footer, .site-footer, .aqm-brokerage-id',
+		// 'solid' or 'transparent'. Solid is the default: a review sitting on
+		// top of page content needs to be readable, and glass over arbitrary
+		// content is not.
+		'box_bg'        => 'solid',
+		// Hide the floating bar once the footer is on screen. Costs a few lines
+		// of JavaScript; see aqm_rev_float_hide_js() for why that is worth it.
+		'float_hide'    => 1,
 	);
 	$saved   = get_option( 'aqm_reviews_profile', array() );
 	$profile = array_merge( $defaults, is_array( $saved ) ? $saved : array() );
@@ -1334,6 +1341,32 @@ function aqm_rev_screen_profile() {
 		(int) $profile['box_height']
 	);
 	printf(
+		'<tr><th>Box background</th><td>'
+		. '<select name="box_bg">'
+		. '<option value="solid"%1$s>Solid &mdash; white, readable over anything</option>'
+		. '<option value="transparent"%2$s>Transparent &mdash; frosted, shows the page through</option>'
+		. '</select>'
+		. '<p class="description">Applies to the badge and every review card. Transparent keeps the '
+		. 'border and shadow, so the box still has an edge, and blurs what is behind it where the '
+		. 'browser supports that. The text colour is left as it is &mdash; over a dark background a '
+		. 'transparent box will be hard to read, so check it before you keep it.</p></td></tr>',
+		selected( 'solid', $profile['box_bg'], false ),
+		selected( 'transparent', $profile['box_bg'], false )
+	);
+	printf(
+		'<tr><th>Hide at the footer</th><td>'
+		. '<label><input type="checkbox" name="float_hide" value="1"%s> '
+		. 'Get out of the way when the footer comes into view</label>'
+		. '<p class="description">The floating bar is pinned to the bottom of the screen, so at the end '
+		. 'of a page it sits on the footer &mdash; and that is where the RECO brokerage line is. With '
+		. 'this on, the bar fades out as soon as the footer appears and comes back when you scroll up.'
+		. '<br>This is the only JavaScript the plugin uses, and it is why: CSS cannot ask whether '
+		. 'another element is on screen. It watches for the element below, so that box must be filled '
+		. 'in. If the browser is too old to support it the bar simply never hides &mdash; nothing '
+		. 'breaks.</p></td></tr>',
+		checked( 1, (int) $profile['float_hide'], false )
+	);
+	printf(
 		'<tr><th>Keep above the badge</th><td>'
 		. '<input name="footer_sel" type="text" value="%s" class="regular-text" style="max-width:520px">'
 		. '<p class="description">The floating badge is pinned to the bottom of the screen, so at the '
@@ -1693,6 +1726,10 @@ add_action(
 				'footer_sel'    => isset( $_POST['footer_sel'] )
 					? aqm_rev_safe_selector( wp_unslash( $_POST['footer_sel'] ) )
 					: '',
+				'box_bg'        => ( isset( $_POST['box_bg'] ) && 'transparent' === $_POST['box_bg'] )
+					? 'transparent'
+					: 'solid',
+				'float_hide'    => isset( $_POST['float_hide'] ) ? 1 : 0,
 			),
 			false
 		);
@@ -2612,6 +2649,7 @@ function aqm_rev_styles() {
 	<?php
 	aqm_rev_size_styles();
 	aqm_rev_footer_stack_css();
+	aqm_rev_float_hide_js();
 	// No JavaScript is printed. The badge is a link, not a disclosure widget:
 	// one click goes straight to Google, so there is nothing to toggle.
 }
@@ -2648,6 +2686,75 @@ function aqm_rev_safe_selector( $raw ) {
  * Printed only when the float is actually on the page - there is nothing to
  * stack against otherwise.
  */
+/**
+ * Hide the floating bar once the footer is on screen.
+ *
+ * WHY THIS IS THE ONE PIECE OF JAVASCRIPT IN THE PLUGIN
+ *
+ * The bar is position:fixed, so at the end of a page it lands on the footer -
+ * which is where the RECO brokerage identification line lives. Raising the
+ * footer's z-index (see aqm_rev_footer_stack_css) puts the footer in front,
+ * but only helps if the footer has a background of its own. On a transparent
+ * footer the two simply overlap and both become unreadable.
+ *
+ * Getting out of the way entirely is the only approach that works regardless
+ * of what the footer looks like, and it cannot be done in CSS: nothing in CSS
+ * can ask "is that other element currently visible?".
+ *
+ * IntersectionObserver is used rather than a scroll handler - the browser
+ * reports the crossing itself, so nothing runs while the page is scrolling.
+ * If the API is missing the bar simply never hides, which is where we were
+ * before, so an old browser loses the improvement but nothing breaks.
+ */
+function aqm_rev_float_hide_js() {
+
+	$profile = aqm_rev_profile();
+
+	if ( empty( $profile['float_hide'] ) ) {
+		return;
+	}
+
+	$sel = aqm_rev_safe_selector( $profile['footer_sel'] );
+	if ( '' === $sel ) {
+		return;
+	}
+
+	?>
+<style id="aqm-rev-float-hide">
+.aqm-rev-floatwrap{transition:opacity .18s ease,transform .18s ease}
+.aqm-rev-floatwrap.aqm-rev-tucked{opacity:0;transform:translateY(12px);
+	pointer-events:none;visibility:hidden}
+@media (prefers-reduced-motion:reduce){
+	.aqm-rev-floatwrap{transition:none}
+	.aqm-rev-floatwrap.aqm-rev-tucked{transform:none}
+}
+</style>
+<script id="aqm-rev-float-hide-js">
+(function(){
+	if(!window.IntersectionObserver){return;}
+	var run=function(){
+		var bar=document.querySelector('.aqm-rev-floatwrap');
+		if(!bar){return;}
+		var marks=document.querySelectorAll(<?php echo wp_json_encode( $sel ); ?>);
+		if(!marks.length){return;}
+		var seen=0;
+		var io=new IntersectionObserver(function(entries){
+			entries.forEach(function(e){seen+=e.isIntersecting?1:-1;});
+			if(seen<0){seen=0;}
+			bar.classList.toggle('aqm-rev-tucked',seen>0);
+		},{threshold:0});
+		Array.prototype.forEach.call(marks,function(m){io.observe(m);});
+	};
+	if(document.readyState==='loading'){
+		document.addEventListener('DOMContentLoaded',run);
+	}else{
+		run();
+	}
+})();
+</script>
+	<?php
+}
+
 function aqm_rev_footer_stack_css() {
 
 	$profile = aqm_rev_profile();
@@ -2683,6 +2790,19 @@ function aqm_rev_size_styles() {
 	$photo  = max( 24, (int) $profile['box_photo'] );
 
 	$css = sprintf( '.aqm-rev{font-size:%dpx}', $font );
+
+	/*
+	 * Transparent boxes.
+	 *
+	 * The border and shadow stay - without them a transparent card has no edge
+	 * at all and the text floats loose over whatever is behind it. The text
+	 * colour is left alone deliberately: forcing white here would be a guess
+	 * about the page behind, and a wrong guess is invisible text.
+	 */
+	if ( 'transparent' === $profile['box_bg'] ) {
+		$css .= '.aqm-rev .aqm-rev-badge,.aqm-rev .aqm-rev-card{background:transparent;'
+			. 'backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}';
+	}
 
 	// The photo is the badge's height driver, so it is set on its own.
 	$css .= sprintf(
