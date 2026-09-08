@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.9.0
+ * Version:     1.10.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.9.0' );
+define( 'AQM_REV_VERSION', '1.10.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -175,9 +175,16 @@ function aqm_rev_profile() {
 		// Hide the floating bar once the footer is on screen. Costs a few lines
 		// of JavaScript; see aqm_rev_float_hide_js() for why that is worth it.
 		'float_hide'    => 1,
-		// Distance from the corner, in pixels. 20 is the design default; a
-		// floating chat button in the same corner needs roughly 90 to clear it.
-		'float_gap'     => 20,
+		/*
+		 * MINIMUM distance from the corner, in pixels.
+		 *
+		 * 90 rather than 20 because a floating chat button - WhatsApp, Messenger,
+		 * a live-chat bubble - sits in a bottom corner on most sites, and landing
+		 * on top of one is the common case rather than the exception. The script
+		 * measures whatever is actually there and raises this if it needs to, so
+		 * this number is a floor, not the final value.
+		 */
+		'float_gap'     => 90,
 	);
 	$saved   = get_option( 'aqm_reviews_profile', array() );
 	$profile = array_merge( $defaults, is_array( $saved ) ? $saved : array() );
@@ -1360,12 +1367,13 @@ function aqm_rev_screen_profile() {
 		'<tr><th>Distance from the corner</th><td>'
 		. '<input name="float_gap" type="number" min="0" max="400" step="2" value="%d" '
 		. 'class="small-text"> px'
-		. '<p class="description">How far the floating bar sits from the left or right edge. '
-		. '<strong>20</strong> is the design default.<br>'
-		. 'If a chat button shares the same corner the two overlap &mdash; a WhatsApp bubble is about '
-		. '70px wide, so <strong>90</strong> clears it with a little air. The bar keeps its distance '
-		. 'from the bottom either way, because lifting it would push it over the page content '
-		. 'instead.</p></td></tr>',
+		. '<p class="description">The <strong>minimum</strong> distance from the left or right edge. '
+		. '<strong>90</strong> by default, which clears a floating chat bubble on its own.<br>'
+		. 'You should not normally need to change this: the bar measures whatever else is pinned in the '
+		. 'same corner &mdash; a WhatsApp or Messenger button, a support widget &mdash; and moves outside '
+		. 'it automatically, on whichever side it is on. This number is the floor it never goes below. '
+		. 'The distance from the bottom is left alone, because lifting the bar would push it over the '
+		. 'page content instead.</p></td></tr>',
 		(int) $profile['float_gap']
 	);
 	printf(
@@ -2728,13 +2736,13 @@ function aqm_rev_float_hide_js() {
 
 	$profile = aqm_rev_profile();
 
-	if ( empty( $profile['float_hide'] ) ) {
-		return;
-	}
+	$hide = ! empty( $profile['float_hide'] );
+	$sel  = aqm_rev_safe_selector( $profile['footer_sel'] );
+	$gap  = max( 0, (int) $profile['float_gap'] );
 
-	$sel = aqm_rev_safe_selector( $profile['footer_sel'] );
-	if ( '' === $sel ) {
-		return;
+	if ( ! $hide || '' === $sel ) {
+		$sel  = '';
+		$hide = false;
 	}
 
 	?>
@@ -2749,22 +2757,74 @@ function aqm_rev_float_hide_js() {
 </style>
 <script id="aqm-rev-float-hide-js">
 (function(){
-	if(!window.IntersectionObserver){return;}
-	var run=function(){
-		var bar=document.querySelector('.aqm-rev-floatwrap');
+	var MIN = <?php echo (int) $gap; ?>;
+	var SEL = <?php echo $sel ? wp_json_encode( $sel ) : 'null'; ?>;
+
+	var bar = null;
+
+	/*
+	 * Move clear of whatever else is pinned in the same corner.
+	 *
+	 * A fixed chat bubble - WhatsApp, Messenger, a support widget - lives in a
+	 * bottom corner on most sites, and a fixed number cannot know how wide it
+	 * is. So measure: look at the elements pinned near the same corner, take
+	 * the widest intrusion, and sit outside it. The saved setting is the floor,
+	 * so the bar never ends up closer to the edge than intended.
+	 *
+	 * Only body-level children are examined. Floating widgets are appended to
+	 * the body by every plugin that makes them, and walking the whole document
+	 * to find them would cost far more than it is worth.
+	 */
+	var clear = function(){
 		if(!bar){return;}
-		var marks=document.querySelectorAll(<?php echo wp_json_encode( $sel ); ?>);
-		if(!marks.length){return;}
-		var seen=0;
-		var io=new IntersectionObserver(function(entries){
-			entries.forEach(function(e){seen+=e.isIntersecting?1:-1;});
-			if(seen<0){seen=0;}
-			bar.classList.toggle('aqm-rev-tucked',seen>0);
-		},{threshold:0});
-		Array.prototype.forEach.call(marks,function(m){io.observe(m);});
+		var right = bar.classList.contains('aqm-rev-float-right');
+		var side  = right ? 'right' : 'left';
+		var vw = window.innerWidth, vh = window.innerHeight, need = MIN;
+
+		Array.prototype.forEach.call(document.body.children, function(el){
+			if(el === bar || el.contains(bar) || bar.contains(el)){return;}
+			var cs = window.getComputedStyle(el);
+			if(cs.position !== 'fixed' || cs.display === 'none' || cs.visibility === 'hidden'){return;}
+			var r = el.getBoundingClientRect();
+			// A button, not a banner: small, near the bottom, on our side.
+			if(!r.width || !r.height || r.width > 240){return;}
+			if(r.bottom < vh - 220){return;}
+			if(right ? (r.right < vw - 240) : (r.left > 240)){return;}
+			need = Math.max(need, (right ? (vw - r.left) : r.right) + 14);
+		});
+
+		bar.style.setProperty(side, Math.round(need) + 'px');
+		bar.style.setProperty('max-width', 'calc(100% - ' + Math.round(need + 20) + 'px)');
 	};
-	if(document.readyState==='loading'){
-		document.addEventListener('DOMContentLoaded',run);
+
+	var run = function(){
+		bar = document.querySelector('.aqm-rev-floatwrap');
+		if(!bar){return;}
+
+		clear();
+
+		if(SEL && window.IntersectionObserver){
+			var marks = document.querySelectorAll(SEL);
+			if(marks.length){
+				var seen = 0;
+				var io = new IntersectionObserver(function(entries){
+					entries.forEach(function(e){ seen += e.isIntersecting ? 1 : -1; });
+					if(seen < 0){ seen = 0; }
+					bar.classList.toggle('aqm-rev-tucked', seen > 0);
+				},{threshold:0});
+				Array.prototype.forEach.call(marks, function(m){ io.observe(m); });
+			}
+		}
+	};
+
+	var t;
+	window.addEventListener('resize', function(){ clearTimeout(t); t = setTimeout(clear, 150); });
+	// Chat widgets often inject themselves late, so measure again once
+	// everything has finished loading.
+	window.addEventListener('load', function(){ setTimeout(clear, 400); });
+
+	if(document.readyState === 'loading'){
+		document.addEventListener('DOMContentLoaded', run);
 	}else{
 		run();
 	}
