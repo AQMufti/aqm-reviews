@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.12.0
+ * Version:     1.13.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.12.0' );
+define( 'AQM_REV_VERSION', '1.13.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -122,7 +122,7 @@ register_activation_hook( __FILE__, 'aqm_rev_maybe_install' );
 
 // Bumped to run the status repair in aqm_rev_maybe_install(). Raise it whenever
 // the table or its stored values need a one-off pass.
-define( 'AQM_REV_SCHEMA', '1.0.1' );
+define( 'AQM_REV_SCHEMA', '1.0.2' );
 
 /** The reviews table name, prefix and all. */
 function aqm_rev_table() {
@@ -142,6 +142,25 @@ function aqm_rev_profile() {
 		'checked'       => '2026-09-02',
 		'float'         => 0,
 		'float_pos'     => 'bottom-left',
+		/*
+		 * WHERE THE BAR APPEARS.
+		 *
+		 * 'all' means the whole site and asks no questions of the database on
+		 * the front end - it is the default and the common case. It becomes
+		 * 'some' only when a page is unticked on the settings screen, and then
+		 * float_pages holds the page IDs that keep it, float_posts covers
+		 * every blog post as one choice, and float_rest covers the views that
+		 * are not a page or a post at all: the blog index, search results,
+		 * archives and 404.
+		 *
+		 * Untick everything and 'float' goes to 0 - that is the off switch.
+		 */
+		'float_scope'   => 'all',
+		'float_pages'   => array(),
+		'float_posts'   => 1,
+		'float_rest'    => 1,
+		// Retired in 1.13.0 by the page list above. Kept so the one-time
+		// migration in aqm_rev_maybe_install() can still read it.
 		'float_exclude' => '',
 		// One number drives both placements; see the admin screen's
 		// "Review cards" field. Kept as two keys because the corner and an
@@ -268,6 +287,34 @@ function aqm_rev_maybe_install() {
 	$wpdb->query( // phpcs:ignore WordPress.DB
 		"UPDATE {$table} SET status = 'published' WHERE status = 'publish'" // phpcs:ignore WordPress.DB
 	);
+
+	/*
+	 * Migration, 8 Sep 2026 (schema 1.0.2).
+	 *
+	 * "Except on these pages" - a comma-separated list of page IDs - was
+	 * replaced by a ticked list of page names. A site that had exclusions
+	 * would otherwise start showing the bar on exactly the pages it had been
+	 * told to keep it off, so those exclusions are converted once, here, into
+	 * the new list: every published page except the ones named, plus posts and
+	 * everything else. A site with no exclusions keeps scope 'all' and this
+	 * does nothing.
+	 */
+	$profile = get_option( 'aqm_reviews_profile', array() );
+
+	if ( is_array( $profile ) && ! empty( $profile['float_exclude'] ) && empty( $profile['float_pages'] ) ) {
+
+		$excluded = array_filter(
+			array_map( 'absint', preg_split( '/[^0-9]+/', (string) $profile['float_exclude'] ) )
+		);
+
+		$profile['float_pages']   = array_values( array_diff( array_keys( aqm_rev_page_choices() ), $excluded ) );
+		$profile['float_scope']   = 'some';
+		$profile['float_posts']   = 1;
+		$profile['float_rest']    = 1;
+		$profile['float_exclude'] = '';
+
+		update_option( 'aqm_reviews_profile', $profile );
+	}
 
 	update_option( 'aqm_reviews_schema', AQM_REV_SCHEMA, false );
 }
@@ -1149,6 +1196,107 @@ function aqm_rev_rows_to_items( $rows ) {
 	return $items;
 }
 
+/**
+ * Read the "where it appears" list back off the posted form.
+ *
+ * Returns the four stored values plus the master switch. Everything ticked
+ * collapses to scope 'all', which is not the same as a list that happens to
+ * contain every page today: 'all' keeps covering pages added next month,
+ * which is what "select all" means to the person who clicked it. Nothing
+ * ticked is the off switch - there is no separate one to forget.
+ */
+function aqm_rev_where_posted() {
+
+	$posted = isset( $_POST['float_where'] ) && is_array( $_POST['float_where'] ) // phpcs:ignore WordPress.Security.NonceVerification -- the caller verifies.
+		? array_values( array_unique( array_filter( array_map( 'absint', wp_unslash( $_POST['float_where'] ) ) ) ) ) // phpcs:ignore WordPress.Security.NonceVerification
+		: array();
+
+	$posts = empty( $_POST['float_posts'] ) ? 0 : 1; // phpcs:ignore WordPress.Security.NonceVerification
+	$rest  = empty( $_POST['float_rest'] ) ? 0 : 1;  // phpcs:ignore WordPress.Security.NonceVerification
+
+	$every = array_keys( aqm_rev_page_choices() );
+	$all   = $posts && $rest && ! array_diff( $every, $posted );
+
+	return array(
+		'float' => ( $posted || $posts || $rest ) ? 1 : 0,
+		'scope' => $all ? 'all' : 'some',
+		'pages' => $posted,
+		'posts' => $posts,
+		'rest'  => $rest,
+	);
+}
+
+/**
+ * The "where it appears" list.
+ *
+ * A ticked list of the site's own pages rather than a switch plus a box of
+ * numbers. The old pair asked the person to know a page's numeric ID and to
+ * hold "on everywhere, except these" in their head; this asks them to look at
+ * a list of page names and untick one. Everything ticked is the default and
+ * means the whole site, including pages added later.
+ */
+function aqm_rev_where_field( $profile ) {
+
+	$pages = aqm_rev_page_choices();
+	$all   = ( 'all' === $profile['float_scope'] );
+	$on    = array_map( 'absint', (array) $profile['float_pages'] );
+	$off   = empty( $profile['float'] );
+
+	echo '<tr><th>Where it appears</th><td>';
+
+	echo '<p><button type="button" class="button" data-aqm-rev-tick="1">Select all</button> '
+		. '<button type="button" class="button" data-aqm-rev-tick="0">Deselect all</button></p>';
+
+	echo '<div id="aqm-rev-where" style="max-height:280px;overflow:auto;border:1px solid #dcdcde;'
+		. 'border-radius:4px;padding:10px 14px;background:#fff;max-width:560px">';
+
+	foreach ( $pages as $id => $title ) {
+		printf(
+			'<label style="display:block;padding:3px 0"><input type="checkbox" name="float_where[]" '
+			. 'value="%d"%s> %s</label>',
+			(int) $id,
+			checked( ! $off && ( $all || in_array( (int) $id, $on, true ) ), true, false ),
+			esc_html( $title )
+		);
+	}
+
+	if ( ! $pages ) {
+		echo '<p class="description">No published pages yet.</p>';
+	}
+
+	echo '<hr style="margin:10px 0;border:0;border-top:1px solid #f0f0f1">';
+
+	printf(
+		'<label style="display:block;padding:3px 0"><input type="checkbox" name="float_posts" '
+		. 'value="1"%s> <strong>All blog posts</strong></label>',
+		checked( ! $off && ( $all || ! empty( $profile['float_posts'] ) ), true, false )
+	);
+	printf(
+		'<label style="display:block;padding:3px 0"><input type="checkbox" name="float_rest" '
+		. 'value="1"%s> <strong>Everywhere else</strong> &mdash; blog index, search results, '
+		. 'archives, 404</label>',
+		checked( ! $off && ( $all || ! empty( $profile['float_rest'] ) ), true, false )
+	);
+
+	echo '</div>';
+
+	echo '<p class="description">Everything is ticked to start with, which is the same as showing '
+		. 'the bar on the whole site &mdash; including pages added later. Untick a page to keep '
+		. 'the bar off that one page. <strong>Deselect all turns the reviews bar off '
+		. 'completely.</strong></p>';
+
+	// Two buttons' worth of behaviour, in the admin only. Written inline rather
+	// than enqueued for the same reason the front-end CSS is: nothing to 404,
+	// and nothing for a cache to combine wrongly.
+	echo '<script>(function(){var b=document.querySelectorAll("[data-aqm-rev-tick]");'
+		. 'Array.prototype.forEach.call(b,function(el){el.addEventListener("click",function(){'
+		. 'var on=el.getAttribute("data-aqm-rev-tick")==="1";'
+		. 'var boxes=document.querySelectorAll("#aqm-rev-where input[type=checkbox]");'
+		. 'Array.prototype.forEach.call(boxes,function(c){c.checked=on;});});});})();</script>';
+
+	echo '</td></tr>';
+}
+
 function aqm_rev_screen_profile() {
 
 	$profile = aqm_rev_profile();
@@ -1235,14 +1383,7 @@ function aqm_rev_screen_profile() {
 		. '<strong>Total reviews</strong> box, with review cards beside it.</p>';
 
 	echo '<table class="form-table"><tbody>';
-	printf(
-		'<tr><th>Reviews</th><td><label><input name="float" type="checkbox" value="1" %s> '
-		. 'Show the reviews on every page</label>'
-		. '<p class="description">One switch for the whole bar &mdash; the Total reviews box '
-		. '<em>and</em> the cards beside it. Off means nothing appears in the corner at all.</p>'
-		. '</td></tr>',
-		checked( ! empty( $profile['float'] ), true, false )
-	);
+	aqm_rev_where_field( $profile );
 	/*
 	 * ONE NUMBER, NOT TWO.
 	 *
@@ -1279,15 +1420,6 @@ function aqm_rev_screen_profile() {
 		. 'keeps the two apart.</p></td></tr>',
 		selected( 'bottom-right' !== $profile['float_pos'], true, false ),
 		selected( 'bottom-right' === $profile['float_pos'], true, false )
-	);
-	printf(
-		'<tr><th>Except on these pages</th><td>'
-		. '<input name="float_exclude" type="text" value="%s" class="large-text">'
-		. '<p class="description">Page or post <strong>IDs</strong>, comma separated. Use this '
-		. 'when the badge lands on top of something &mdash; no code change needed. The ID is '
-		. 'in the address bar when you edit a page: <code>post=<strong>103</strong></code>.</p>'
-		. '</td></tr>',
-		esc_attr( $profile['float_exclude'] )
 	);
 	echo '</tbody></table>';
 
@@ -1710,6 +1842,8 @@ add_action(
 			delete_transient( 'aqm_rev_face_' . md5( trim( esc_url_raw( wp_unslash( $_POST['avatar'] ) ) ) ) );
 		}
 
+		$where = aqm_rev_where_posted();
+
 		update_option(
 			'aqm_reviews_profile',
 			array(
@@ -1721,16 +1855,21 @@ add_action(
 				'place_id' => isset( $_POST['place_id'] ) ? sanitize_text_field( wp_unslash( $_POST['place_id'] ) ) : '',
 				'checked'  => isset( $_POST['checked'] ) ? sanitize_text_field( wp_unslash( $_POST['checked'] ) ) : '',
 
-				'float'         => empty( $_POST['float'] ) ? 0 : 1,
+				// Resolved from the ticked list; see aqm_rev_where_posted().
+				'float'         => $where['float'],
+				'float_scope'   => $where['scope'],
+				'float_pages'   => $where['pages'],
+				'float_posts'   => $where['posts'],
+				'float_rest'    => $where['rest'],
 				'float_pos'     => ( isset( $_POST['float_pos'] ) && 'bottom-right' === $_POST['float_pos'] )
 					? 'bottom-right'
 					: 'bottom-left',
 				// Kept as the typed string so the field reads back as entered;
 				// it is parsed to integers at render time, where a stray
 				// character is ignored rather than guessed at.
-				'float_exclude' => isset( $_POST['float_exclude'] )
-					? sanitize_text_field( wp_unslash( $_POST['float_exclude'] ) )
-					: '',
+				// Retired in 1.13.0. Cleared on save so the migration cannot
+				// run a second time against a stale value.
+				'float_exclude' => '',
 
 				// 0 is a real choice here - it switches the cards off - so the
 				// bounds are applied rather than falling back to a default.
@@ -2439,6 +2578,67 @@ function aqm_rev_scroll_html( $profile ) {
  * page where the badge lands on top of something - can be handled without
  * touching this file.
  */
+function aqm_rev_float_here( $profile ) {
+
+	// The overwhelmingly common setting, and the one that costs nothing to
+	// answer: everything is ticked, so there is nothing to look up.
+	if ( 'all' === $profile['float_scope'] ) {
+		return true;
+	}
+
+	if ( is_singular( 'post' ) ) {
+		return ! empty( $profile['float_posts'] );
+	}
+
+	if ( is_page() ) {
+		$here = (int) get_queried_object_id();
+		return $here && in_array( $here, array_map( 'absint', (array) $profile['float_pages'] ), true );
+	}
+
+	/*
+	 * Everything else - the blog index, a search result, an archive, a 404,
+	 * and any custom post type single. A CPT deliberately falls here rather
+	 * than into the page list: a type that was never offered on the settings
+	 * screen must not disappear because of a choice made about pages.
+	 */
+	return ! empty( $profile['float_rest'] );
+}
+
+/**
+ * Published pages, id => title, for the "where it appears" list.
+ *
+ * Ordered the way the site is: menu order first, then title, so the list on
+ * the settings screen reads in the same sequence as the site's own navigation.
+ */
+function aqm_rev_page_choices() {
+
+	$pages = get_posts(
+		array(
+			'post_type'        => 'page',
+			'post_status'      => 'publish',
+			'numberposts'      => 200,
+			'orderby'          => array( 'menu_order' => 'ASC', 'title' => 'ASC' ),
+			'suppress_filters' => false,
+		)
+	);
+
+	$front  = (int) get_option( 'page_on_front' );
+	$out    = array();
+
+	foreach ( $pages as $page ) {
+		$title = trim( $page->post_title );
+		if ( '' === $title ) {
+			$title = '(no title, ID ' . (int) $page->ID . ')';
+		}
+		if ( $front && (int) $page->ID === $front ) {
+			$title .= ' — home page';
+		}
+		$out[ (int) $page->ID ] = $title;
+	}
+
+	return $out;
+}
+
 function aqm_rev_float() {
 
 	$profile = aqm_rev_profile();
@@ -2447,11 +2647,7 @@ function aqm_rev_float() {
 		return;
 	}
 
-	// A page can opt out by ID. Anything that is not a number is ignored rather
-	// than guessed at.
-	$exclude = array_filter( array_map( 'absint', preg_split( '/[^0-9]+/', (string) $profile['float_exclude'] ) ) );
-	$here    = (int) get_queried_object_id();
-	if ( $here && in_array( $here, $exclude, true ) ) {
+	if ( ! aqm_rev_float_here( $profile ) ) {
 		return;
 	}
 
