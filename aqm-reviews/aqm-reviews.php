@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.10.0
+ * Version:     1.11.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.10.0' );
+define( 'AQM_REV_VERSION', '1.11.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -2448,8 +2448,11 @@ function aqm_rev_float() {
 	// mirrored in the right-hand one. That is what row-reverse does below.
 	aqm_rev_styles();
 	printf(
-		'<div class="aqm-rev-floatwrap %s">%s%s</div>',
+		// The corner is written into the markup as well as the class, so which
+		// setting produced the bar can be read off the page in one look.
+		'<div class="aqm-rev-floatwrap %s" data-aqm-corner="%s">%s%s</div>',
 		esc_attr( $pos ),
+		esc_attr( 'bottom-right' === $profile['float_pos'] ? 'right' : 'left' ),
 		aqm_rev_badge_html( $corner ), // phpcs:ignore WordPress.Security.EscapeOutput
 		aqm_rev_scroll_html( $corner ) // phpcs:ignore WordPress.Security.EscapeOutput
 	);
@@ -2626,9 +2629,12 @@ function aqm_rev_styles() {
 	.aqm-rev-floatwrap{position:fixed;bottom:20px;z-index:9990;margin:0;
 		display:flex;align-items:stretch;gap:12px;width:auto;
 		max-width:calc(100% - 40px)}
-	.aqm-rev-floatwrap.aqm-rev-float-left{left:20px;flex-direction:row}
+	/* The opposite edge is cleared outright, not left unset: a stale rule from
+	   an older version - or a theme that pins things in the other corner - has
+	   to lose to the setting rather than fight it. */
+	.aqm-rev-floatwrap.aqm-rev-float-left{left:20px;right:auto;flex-direction:row}
 	/* Mirrored, so the cards still run inward and never off the screen edge. */
-	.aqm-rev-floatwrap.aqm-rev-float-right{right:20px;flex-direction:row-reverse}
+	.aqm-rev-floatwrap.aqm-rev-float-right{right:20px;left:auto;flex-direction:row-reverse}
 	.aqm-rev-floatwrap .aqm-rev-scroll{margin-top:0;min-width:0;display:flex;
 		align-items:center}
 	.aqm-rev-floatwrap .aqm-rev-scroll .aqm-rev-strip{width:100%;padding:0}
@@ -2657,8 +2663,8 @@ function aqm_rev_styles() {
 	   heading, because there it has the width for it. */
 	@media (max-width:767px){
 		.aqm-rev-floatwrap{bottom:14px;max-width:calc(100% - 28px)}
-		.aqm-rev-floatwrap.aqm-rev-float-left{left:14px}
-		.aqm-rev-floatwrap.aqm-rev-float-right{right:14px}
+		.aqm-rev-floatwrap.aqm-rev-float-left{left:14px;right:auto}
+		.aqm-rev-floatwrap.aqm-rev-float-right{right:14px;left:auto}
 		.aqm-rev-floatwrap .aqm-rev-name{display:none}
 		.aqm-rev-floatwrap .aqm-rev-badge{gap:10px;padding:10px 14px}
 		.aqm-rev-floatwrap .aqm-rev-avatar{height:58px}
@@ -2793,6 +2799,9 @@ function aqm_rev_float_hide_js() {
 			need = Math.max(need, (right ? (vw - r.left) : r.right) + 14);
 		});
 
+		// Clear the edge we are NOT using. Setting only one side leaves whatever
+		// pinned the other one still in force.
+		bar.style.setProperty(right ? 'left' : 'right', 'auto');
 		bar.style.setProperty(side, Math.round(need) + 'px');
 		bar.style.setProperty('max-width', 'calc(100% - ' + Math.round(need + 20) + 'px)');
 	};
@@ -2955,8 +2964,8 @@ function aqm_rev_size_styles() {
 	 */
 	$gap  = max( 0, (int) $profile['float_gap'] );
 	$css .= sprintf(
-		'.aqm-rev-floatwrap.aqm-rev-float-left{left:%1$dpx}'
-		. '.aqm-rev-floatwrap.aqm-rev-float-right{right:%1$dpx}'
+		'.aqm-rev-floatwrap.aqm-rev-float-left{left:%1$dpx;right:auto}'
+		. '.aqm-rev-floatwrap.aqm-rev-float-right{right:%1$dpx;left:auto}'
 		. '.aqm-rev-floatwrap{max-width:calc(100%% - %2$dpx)}',
 		$gap,
 		max( 40, $gap + 20 )
@@ -2983,6 +2992,89 @@ function aqm_rev_size_styles() {
 		$float_face,
 		max( 10, (int) round( $float_face / 2.9 ) ),
 		max( 11, (int) round( $font * 0.88 ) )
+	);
+
+	/*
+	 * NOTHING PAINTS OUTSIDE THE CORNER BADGE.
+	 *
+	 * The badge in the float has a fixed height, but until 1.11.0 its contents
+	 * knew nothing about that height: the stars are text at twice the body
+	 * size and the Google mark is 1.6x it, both sized from the text setting
+	 * alone. Set a short band and the star row and the mark simply painted
+	 * past the edge of the box - which is what AQ saw on 8 Sep 2026.
+	 *
+	 * The band is authoritative. What does not fit is made to fit, in this
+	 * order:
+	 *
+	 *   1. Three rows at full size, if they fit. Nothing changes - the default
+	 *      profile lands here, so an untouched site looks exactly as before.
+	 *   2. Drop the long heading line. It is the tallest thing that is not the
+	 *      rating, and the phone layout has always dropped it for the same
+	 *      reason.
+	 *   3. Shrink the stars, the mark and the count until the rest fits.
+	 *
+	 * overflow:hidden on the badge is the backstop, not the mechanism. At the
+	 * 56px floor the arithmetic already fits; the clip only ever catches a
+	 * font whose glyphs sit further outside their em box than the allowance
+	 * below expects.
+	 */
+	$row_gap = 4;
+
+	// The count line, sized from the text setting but never taller than about
+	// a third of the band - a 15px line inside a 34px band leaves no room for
+	// the rating it is meant to caption.
+	$f_count = max( 10, min( (int) round( $font * 0.95 ), max( 10, (int) floor( $float_face * 0.32 ) ) ) );
+	$count_h = (int) ceil( $f_count * 1.25 );
+
+	// The heading line: body size, its own 5px margin included.
+	$name_h = (int) round( $font * 1.3 ) + 5;
+
+	/*
+	 * A star glyph paints a little outside its em box, so the row it occupies
+	 * is taller than its font-size. 1.15 is that allowance; it is why the
+	 * budget is divided by 1.15 rather than used directly.
+	 */
+	$star_nat = (int) round( $font * 2 );
+	$g_nat    = (int) round( $font * 1.6 );
+	$stars_h  = (int) ceil( max( $star_nat, $g_nat ) * 1.15 );
+
+	$show_name = ( $name_h + $stars_h + $count_h + ( 2 * $row_gap ) ) <= $float_face;
+
+	$budget = $float_face - $count_h - $row_gap - ( $show_name ? $name_h + $row_gap : 0 );
+	$f_star = max( 12, min( $star_nat, (int) floor( $budget / 1.15 ) ) );
+	$f_g    = max( 12, min( $g_nat, $f_star ) );
+
+	$css .= sprintf(
+		// The box itself is the boundary. Nothing inside it may be drawn past
+		// this line, whatever a theme or a font does.
+		'.aqm-rev-floatwrap .aqm-rev-badge{overflow:hidden}'
+		// The text column centres in the band instead of overflowing it.
+		. '.aqm-rev-floatwrap .aqm-rev-body{display:flex;flex-direction:column;'
+		. 'justify-content:center;max-height:100%%;overflow:hidden}'
+		/*
+		 * The heading line, in a min-width query for two reasons: display:none
+		 * has to come after the display:-webkit-box that clamps it to one line
+		 * or it loses to it, and the phone rule that already hides this line
+		 * lives in an earlier style block, where a later rule of equal
+		 * specificity would otherwise bring it back.
+		 */
+		. '@media (min-width:481px){.aqm-rev-floatwrap .aqm-rev-name{'
+		. 'margin-bottom:%2$dpx;display:-webkit-box;-webkit-line-clamp:1;'
+		. '-webkit-box-orient:vertical;overflow:hidden}%1$s}'
+		. '.aqm-rev-floatwrap .aqm-rev-starsrow{margin-bottom:%2$dpx;'
+		. 'flex:0 0 auto;line-height:1}'
+		. '.aqm-rev-floatwrap .aqm-rev-stars{display:block;line-height:1;'
+		. 'white-space:nowrap}'
+		. '.aqm-rev-floatwrap .aqm-rev-star{font-size:%3$dpx;line-height:1;'
+		. 'display:inline-block;vertical-align:top}'
+		. '.aqm-rev-floatwrap .aqm-rev-g{width:%4$dpx;height:%4$dpx;flex:0 0 %4$dpx}'
+		. '.aqm-rev-floatwrap .aqm-rev-count{font-size:%5$dpx;line-height:1.25;'
+		. 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+		$show_name ? '' : '.aqm-rev-floatwrap .aqm-rev-name{display:none}',
+		$row_gap,
+		$f_star,
+		$f_g,
+		$f_count
 	);
 
 	printf( "<style>%s</style>\n", $css ); // phpcs:ignore WordPress.Security.EscapeOutput
