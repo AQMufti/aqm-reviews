@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.11.0
+ * Version:     1.12.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.11.0' );
+define( 'AQM_REV_VERSION', '1.12.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -143,11 +143,14 @@ function aqm_rev_profile() {
 		'float'         => 0,
 		'float_pos'     => 'bottom-left',
 		'float_exclude' => '',
+		// One number drives both placements; see the admin screen's
+		// "Review cards" field. Kept as two keys because the corner and an
+		// in-page badge are still rendered by different callers.
 		'scroll_cards'  => 3,
 		'scroll_speed'  => 6,
 		'scroll_limit'  => 12,
 		'scroll_words'  => 28,
-		'float_cards'   => 1,
+		'float_cards'   => 3,
 		// Box size, in pixels. 0 means "fit the content", which is what the
 		// badge did before any of this was adjustable.
 		'box_width'     => 0,
@@ -1227,16 +1230,46 @@ function aqm_rev_screen_profile() {
 	);
 	echo '</tbody></table>';
 
-	echo '<h2>Floating badge</h2>'
-		. '<p>Shows the same badge in a bottom corner of <strong>every</strong> page. '
-		. 'This is what replaces the WPCode snippet: turn it on here, confirm the badge '
-		. 'appears, then the snippet and both Google Reviews plugins can go.</p>';
+	echo '<h2>Reviews bar</h2>'
+		. '<p>The bar in a bottom corner of <strong>every</strong> page: a '
+		. '<strong>Total reviews</strong> box, with review cards beside it.</p>';
 
 	echo '<table class="form-table"><tbody>';
 	printf(
-		'<tr><th>Show it</th><td><label><input name="float" type="checkbox" value="1" %s> '
-		. 'Float the badge on every page</label></td></tr>',
+		'<tr><th>Reviews</th><td><label><input name="float" type="checkbox" value="1" %s> '
+		. 'Show the reviews on every page</label>'
+		. '<p class="description">One switch for the whole bar &mdash; the Total reviews box '
+		. '<em>and</em> the cards beside it. Off means nothing appears in the corner at all.</p>'
+		. '</td></tr>',
 		checked( ! empty( $profile['float'] ), true, false )
+	);
+	/*
+	 * ONE NUMBER, NOT TWO.
+	 *
+	 * Until 1.12.0 this screen had "Cards visible - in a page" and "Cards
+	 * visible - in the corner", which is a distinction the person setting it
+	 * does not have in their head: they are looking at one bar and counting
+	 * the boxes in it. A scan of all 22 pages on the site on 8 Sep 2026 found
+	 * no in-page [aqm_reviews] badge anywhere, so the second field was
+	 * configuring something that does not exist here. Both keys are still
+	 * written, from this one field, so an in-page badge - if one is ever
+	 * placed - matches the corner instead of silently differing. Per page,
+	 * [aqm_reviews cards="2"] still overrides it.
+	 */
+	printf(
+		'<tr><th>Review cards</th><td><select name="cards">%s</select>'
+		. '<p class="description">How many review cards sit <strong>beside</strong> the Total '
+		. 'reviews box. <strong>3</strong> means one Total reviews box plus three review cards. '
+		. '<strong>0</strong> leaves the Total reviews box on its own.</p>'
+		. '<p class="description">The cards run inward from the corner &mdash; to the right of '
+		. 'the box in the bottom-left corner, to its left in the bottom-right one &mdash; so '
+		. 'they never run off the screen edge. On a phone the box appears alone, because it '
+		. 'already fills the corner.</p></td></tr>',
+		aqm_rev_options(
+			range( 0, 5 ),
+			(int) $profile['float_cards'],
+			array( 0 => '0 — Total reviews box only' )
+		)
 	);
 	printf(
 		'<tr><th>Corner</th><td><select name="float_pos">'
@@ -1264,33 +1297,18 @@ function aqm_rev_screen_profile() {
 
 	$verified_live = aqm_rev_count( 'published', 1 );
 
-	echo '<h2>Scrolling reviews window</h2>'
-		. '<p>The strip of review cards that sits under the badge. It shows '
-		. '<strong>published and verified</strong> reviews only, and every card links to the '
-		. 'same place the badge does &mdash; your Google reviews list.</p>';
+	echo '<h2>How the cards read</h2>'
+		. '<p>The review cards counted above show <strong>published and verified</strong> '
+		. 'reviews only, and every card links to the same place the Total reviews box does '
+		. '&mdash; your Google reviews list. Nothing here changes how many are shown.</p>';
 
 	if ( ! $verified_live ) {
-		echo '<div class="notice notice-warning inline"><p><strong>Nothing to scroll yet.</strong> '
+		echo '<div class="notice notice-warning inline"><p><strong>Nothing to show yet.</strong> '
 			. 'No review is both published and verified, so the window renders as nothing at all. '
 			. 'Verify some reviews and publish them and it will appear on its own.</p></div>';
 	}
 
 	echo '<table class="form-table"><tbody>';
-	printf(
-		'<tr><th>Cards visible &mdash; in a page</th><td><select name="scroll_cards">%s</select>'
-		. '<p class="description"><strong>0 turns the window off</strong> and leaves the badge '
-		. 'on its own. On a phone it always becomes one card you swipe, whatever is set here.</p>'
-		. '</td></tr>',
-		aqm_rev_options( range( 0, 5 ), (int) $profile['scroll_cards'], array( 0 => '0 — no scrolling window' ) )
-	);
-	printf(
-		'<tr><th>Cards visible &mdash; in the corner</th><td><select name="float_cards">%s</select>'
-		. '<p class="description">For the floating badge only. The cards sit <strong>beside</strong> '
-		. 'it, running inward from the corner &mdash; to its right in the bottom-left corner, to '
-		. 'its left in the bottom-right one, so they never run off the screen edge. Hidden on '
-		. 'phones, where the badge alone already fills the corner.</p></td></tr>',
-		aqm_rev_options( range( 0, 5 ), (int) $profile['float_cards'], array( 0 => '0 — badge only in the corner' ) )
-	);
 	printf(
 		'<tr><th>Speed</th><td><select name="scroll_speed">%s</select>'
 		. '<p class="description">Seconds each card takes to cross. Higher is slower. It pauses '
@@ -1428,11 +1446,11 @@ function aqm_rev_screen_profile() {
 		. '<p><strong>The window goes wherever the badge goes.</strong> Every badge on the site '
 		. '&mdash; the floating one and any placed in a page &mdash; carries the scrolling window '
 		. 'with it. Nothing has to be placed separately and there is no shortcode to remember. '
-		. 'Setting <strong>Cards visible</strong> to <strong>0</strong> is what turns it off, '
+		. 'Setting <strong>Review cards</strong> to <strong>0</strong> is what turns it off, '
 		. 'everywhere at once.</p>'
-		. '<p class="description">In the bottom corner the window is always <strong>one card '
-		. 'wide</strong> whatever is set above, and is hidden on phones &mdash; a corner strip '
-		. 'three cards across would cover the page. The badge stays either way.</p>'
+		. '<p class="description">On phones the corner shows the Total reviews box alone, '
+		. 'whatever is set above &mdash; a corner strip three cards across would cover the '
+		. 'page. The box stays either way.</p>'
 		. '<h3>Shortcodes, for the exceptions</h3>'
 		. '<table class="widefat striped" style="max-width:820px"><thead><tr>'
 		. '<th style="width:320px">Paste this into a page</th><th>What appears</th>'
@@ -1446,7 +1464,7 @@ function aqm_rev_screen_profile() {
 		. '<tr><td><code>[aqm_reviews layout="list"]</code></td>'
 		. '<td>Every verified review, read straight down the page. No scrolling.</td></tr>'
 		. '<tr><td><code>[aqm_reviews cards="4"]</code></td>'
-		. '<td>Overrides Cards visible on that page only.</td></tr>'
+		. '<td>Overrides <strong>Review cards</strong> on that page only.</td></tr>'
 		. '</tbody></table>';
 
 	// A preview, so "I cannot see it" can be told apart from "it is broken"
@@ -1468,7 +1486,7 @@ function aqm_rev_screen_profile() {
 		echo '<div class="notice notice-warning inline"><p><strong>The window would render as '
 			. 'nothing at all.</strong> ';
 		if ( (int) $profile['scroll_cards'] < 1 ) {
-			echo 'Cards visible is set to <strong>0</strong>, which switches it off.';
+			echo 'Review cards is set to <strong>0</strong>, which switches it off.';
 		} else {
 			echo 'No review is both <strong>published and verified</strong>. Verifying a review '
 				. 'is not enough on its own &mdash; it also has to be published. On the reviews '
@@ -1714,10 +1732,12 @@ add_action(
 					? sanitize_text_field( wp_unslash( $_POST['float_exclude'] ) )
 					: '',
 
-				// 0 is a real choice here - it switches the window off - so the
+				// 0 is a real choice here - it switches the cards off - so the
 				// bounds are applied rather than falling back to a default.
-				'scroll_cards'  => isset( $_POST['scroll_cards'] )
-					? max( 0, min( 5, absint( wp_unslash( $_POST['scroll_cards'] ) ) ) )
+				// One posted field, both keys: see the "Review cards" comment
+				// on the admin screen for why they were merged.
+				'scroll_cards'  => isset( $_POST['cards'] )
+					? max( 0, min( 5, absint( wp_unslash( $_POST['cards'] ) ) ) )
 					: 3,
 				'scroll_speed'  => isset( $_POST['scroll_speed'] )
 					? max( 2, min( 60, absint( wp_unslash( $_POST['scroll_speed'] ) ) ) )
@@ -1728,9 +1748,9 @@ add_action(
 				'scroll_words'  => isset( $_POST['scroll_words'] )
 					? max( 6, min( 120, absint( wp_unslash( $_POST['scroll_words'] ) ) ) )
 					: 28,
-				'float_cards'   => isset( $_POST['float_cards'] )
-					? max( 0, min( 5, absint( wp_unslash( $_POST['float_cards'] ) ) ) )
-					: 1,
+				'float_cards'   => isset( $_POST['cards'] )
+					? max( 0, min( 5, absint( wp_unslash( $_POST['cards'] ) ) ) )
+					: 3,
 
 				// 0 is meaningful for width and height - it means "fit the
 				// content" - so these are clamped, never defaulted away.
@@ -2124,7 +2144,7 @@ function aqm_rev_render_list( $reviews, $profile ) {
  * [aqm_reviews limit=6]        cap how many reviews are rendered (list layout)
  *
  * The window travels with the badge by default, everywhere the badge appears,
- * including the sitewide float. Setting "Cards visible" to 0 is what switches it
+ * including the sitewide float. Setting "Review cards" to 0 is what switches it
  * off - there is no shortcode to remember and nothing to place separately.
  * `layout=badge` remains for the odd spot that genuinely wants the box alone.
  */
