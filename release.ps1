@@ -149,9 +149,27 @@ if ([string]::IsNullOrWhiteSpace($Notes)) {
 
 Write-Host "  Publishing to GitHub..."
 gh release create $tag $zipPath --title $tag --notes $Notes
+$createExit = $LASTEXITCODE
 
-if ($LASTEXITCODE -ne 0) {
-    Fail "The release could not be published. The ZIP is still here if you want to upload it by hand."
+# Do not trust the exit code by itself.
+#
+# On 24 Sep 2026 gh published v4.8.0 of aqm-property-listing, attached the ZIP
+# correctly, and still came back non-zero. The script reported a failure that
+# had not happened, and the next run then refused because the release already
+# existed. Ask GitHub what is actually there instead of believing $LASTEXITCODE.
+$info = gh release view $tag --json assets 2>$null
+$viewExit = $LASTEXITCODE
+$published = ($viewExit -eq 0) -and ((($info) -join '') -like "*$slug.zip*")
+
+if (-not $published) {
+    if ($createExit -ne 0) {
+        Fail "The release could not be published. The ZIP is still here if you want to upload it by hand."
+    }
+    Fail "gh reported success but $tag has no $slug.zip attached. Do not let the site update from it - check the release on GitHub."
+}
+
+if ($createExit -ne 0) {
+    Write-Host "  Note: gh exited $createExit, but $tag is published with the ZIP attached." -ForegroundColor Yellow
 }
 
 Write-Host ""
