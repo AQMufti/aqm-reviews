@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Reviews
  * Description: Stores client reviews in their own table, with an admin screen to maintain them and a shortcode to display them. No third-party service, no vendor cache, no API required. Converted from a must-use plugin on 8 Sep 2026 so it can update itself from GitHub releases like every other AQM plugin.
- * Version:     1.14.0
+ * Version:     1.15.0
  * Author:      A. Q. Mufti
  * Plugin URI:  https://github.com/AQMufti/aqm-reviews
  * License:     GPL-2.0-or-later
@@ -73,7 +73,7 @@ defined( 'ABSPATH' ) || exit;
  * filters) and keeps the plugin repairable however badly the rest goes wrong.
  */
 define( 'AQM_REV_FILE', __FILE__ );
-define( 'AQM_REV_VERSION', '1.14.0' );
+define( 'AQM_REV_VERSION', '1.15.0' );
 define( 'AQM_REV_GITHUB_REPO', 'AQMufti/aqm-reviews' );
 
 // Shared GitHub-release updater - identical mechanism in every AQM plugin.
@@ -235,6 +235,200 @@ function aqm_rev_reviews_url( $profile ) {
 	return $place
 		? 'https://search.google.com/local/reviews?placeid=' . rawurlencode( $place )
 		: $profile['url'];
+}
+
+/*
+ * REST: the profile numbers, without a trip through wp-admin.
+ *
+ * WHY THIS EXISTS, 18 Oct 2026
+ *
+ * The badge total is read from Google by hand and is deliberately not derived
+ * from the rows, so it has to be typed in somewhere every time a review lands.
+ * Until now the only place was the Profile tab. This plugin registered no REST
+ * route and no setting, so the toolkit could not reach the number at all, and
+ * a one-digit change meant a manual round trip.
+ *
+ * Two deliberate differences from the Profile form:
+ *
+ *   1. IT MERGES. The form rebuilds the entire option array out of $_POST, so
+ *      every field on screen is rewritten on every save and anything absent
+ *      from the form silently falls back to a default. This writes only the
+ *      keys it is given and leaves the rest of the stored array untouched.
+ *   2. IT CLEARS THE RENDERED COPIES. The badge is built from the option on
+ *      each request, so the option is never the stale part - the page cache
+ *      is. On 4 Sep 2026 the old reviews heading survived inside post 127's
+ *      _elementor_element_cache long after the option had changed, because
+ *      the fix only purged documents it had itself edited.
+ *
+ *     GET  /wp-json/aqm-reviews/v1/profile
+ *     POST /wp-json/aqm-reviews/v1/profile   {"total":50,"checked":"today"}
+ *
+ * manage_options, so an Application Password on an administrator account is
+ * enough: no cookie, no nonce, and nothing to paste into a browser.
+ */
+add_action( 'rest_api_init', 'aqm_rev_rest_routes' );
+
+function aqm_rev_rest_routes() {
+	register_rest_route(
+		'aqm-reviews/v1',
+		'/profile',
+		array(
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => 'aqm_rev_rest_read',
+				'permission_callback' => 'aqm_rev_rest_allowed',
+			),
+			array(
+				'methods'             => WP_REST_Server::EDITABLE,
+				'callback'            => 'aqm_rev_rest_write',
+				'permission_callback' => 'aqm_rev_rest_allowed',
+				'args'                => array(
+					'total'   => array( 'type' => 'integer' ),
+					'average' => array( 'type' => 'string' ),
+					'checked' => array( 'type' => 'string' ),
+				),
+			),
+		)
+	);
+}
+
+/** Administrators only. */
+function aqm_rev_rest_allowed() {
+	if ( current_user_can( 'manage_options' ) ) {
+		return true;
+	}
+	return new WP_Error(
+		'aqm_rev_forbidden',
+		'An administrator account is required.',
+		array( 'status' => rest_authorization_required_code() )
+	);
+}
+
+/** The numbers as they stand, and the exact string the badge renders. */
+function aqm_rev_rest_read() {
+	$p = aqm_rev_profile();
+	return array(
+		'total'   => (int) $p['total'],
+		'average' => (string) $p['average'],
+		'checked' => (string) $p['checked'],
+		'badge'   => (int) $p['total'] . ' Google reviews',
+	);
+}
+
+/**
+ * Write any of total, average, checked. Anything not sent is left alone.
+ */
+function aqm_rev_rest_write( $request ) {
+	$before = aqm_rev_profile();
+
+	$saved = get_option( 'aqm_reviews_profile', array() );
+	$saved = is_array( $saved ) ? $saved : array();
+
+	$changed = array();
+
+	$total = $request->get_param( 'total' );
+	if ( null !== $total ) {
+		$total = (int) $total;
+		if ( $total < 0 || $total > 100000 ) {
+			return new WP_Error(
+				'aqm_rev_bad_total',
+				'total must be between 0 and 100000.',
+				array( 'status' => 400 )
+			);
+		}
+		$saved['total'] = $total;
+		$changed[]      = 'total';
+	}
+
+	$average = $request->get_param( 'average' );
+	if ( null !== $average ) {
+		$average = trim( (string) $average );
+		if ( ! preg_match( '/^[0-5](?:\.[0-9])?$/', $average ) ) {
+			return new WP_Error(
+				'aqm_rev_bad_average',
+				'average must read 0 to 5, optionally with one decimal - for example 5.0.',
+				array( 'status' => 400 )
+			);
+		}
+		// Normalise to one decimal, so a typed "5" renders as 5.0 beside
+		// the stars rather than as a bare integer.
+		$saved['average'] = number_format( (float) $average, 1 );
+		$changed[]        = 'average';
+	}
+
+	$checked = $request->get_param( 'checked' );
+	if ( null !== $checked ) {
+		$checked = trim( (string) $checked );
+		if ( 'today' === strtolower( $checked ) ) {
+			// The site's own timezone. current_time() rather than gmdate(),
+			// so a late-evening run does not record tomorrow's date.
+			$checked = current_time( 'Y-m-d' );
+		}
+		if ( ! preg_match( '/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/', $checked ) ) {
+			return new WP_Error(
+				'aqm_rev_bad_checked',
+				'checked must be YYYY-MM-DD, or the word today.',
+				array( 'status' => 400 )
+			);
+		}
+		$saved['checked'] = $checked;
+		$changed[]        = 'checked';
+	}
+
+	if ( ! $changed ) {
+		return new WP_Error(
+			'aqm_rev_nothing_sent',
+			'Send at least one of total, average or checked.',
+			array( 'status' => 400 )
+		);
+	}
+
+	update_option( 'aqm_reviews_profile', $saved );
+
+	$after = aqm_rev_profile();
+
+	return array(
+		'changed' => $changed,
+		'before'  => array(
+			'total'   => (int) $before['total'],
+			'average' => (string) $before['average'],
+			'checked' => (string) $before['checked'],
+		),
+		'now'     => array(
+			'total'   => (int) $after['total'],
+			'average' => (string) $after['average'],
+			'checked' => (string) $after['checked'],
+		),
+		'purged'  => aqm_rev_purge_rendered(),
+	);
+}
+
+/**
+ * Drop every cached copy of the rendered badge, and name the ones that were
+ * actually there. Reporting what was purged matters: a number that has not
+ * moved on the front end is either a failed write or a surviving cache, and
+ * these two are told apart by this list, not by guesswork.
+ */
+function aqm_rev_purge_rendered() {
+	$done = array();
+
+	// LiteSpeed. do_action is harmless when the plugin is not installed, but
+	// only claim the purge when it is.
+	do_action( 'litespeed_purge_all' );
+	if ( defined( 'LSCWP_V' ) || has_action( 'litespeed_purge_all' ) ) {
+		$done[] = 'litespeed';
+	}
+
+	// Elementor stores rendered HTML per document. See the note above.
+	if ( delete_post_meta_by_key( '_elementor_element_cache' ) ) {
+		$done[] = 'elementor element cache';
+	}
+
+	wp_cache_delete( 'aqm_reviews_profile', 'options' );
+	wp_cache_delete( 'alloptions', 'options' );
+	$done[] = 'object cache';
+
+	return $done;
 }
 
 /**
@@ -2257,14 +2451,14 @@ function aqm_rev_render_list( $reviews, $profile ) {
 
 	$html .= '<div class="aqm-rev-foot">'
 		. sprintf(
-			'<a class="aqm-rev-cta" href="%s" target="_blank" rel="noopener">Read all %d reviews on Google</a>',
+			'<a class="aqm-rev-cta" href="%s" target="_blank" rel="nofollow noopener">Read all %d reviews on Google</a>',
 			esc_url( aqm_rev_reviews_url( $profile ) ),
 			(int) $profile['total']
 		);
 
 	if ( ! empty( $profile['place_id'] ) ) {
 		$html .= sprintf(
-			'<a class="aqm-rev-write" href="%s" target="_blank" rel="noopener">Write a review</a>',
+			'<a class="aqm-rev-write" href="%s" target="_blank" rel="nofollow noopener">Write a review</a>',
 			esc_url( 'https://search.google.com/local/writereview?placeid=' . rawurlencode( $profile['place_id'] ) )
 		);
 	}
@@ -2422,7 +2616,7 @@ function aqm_rev_badge_html( $profile, $extra = '' ) {
 
 	return sprintf(
 		'<div class="aqm-rev aqm-rev-badgewrap%s">'
-		. '<a class="aqm-rev-badge" href="%s" target="_blank" rel="noopener"'
+		. '<a class="aqm-rev-badge" href="%s" target="_blank" rel="nofollow noopener"'
 		. ' aria-label="%s">'
 		. '%s'
 		. '<span class="aqm-rev-body">'
@@ -2521,7 +2715,7 @@ function aqm_rev_scroll_html( $profile ) {
 
 			$slides .= sprintf(
 				'<div class="aqm-rev-slide" style="width:%s"%s>'
-				. '<a class="aqm-rev-card" href="%s" target="_blank" rel="noopener"%s>'
+				. '<a class="aqm-rev-card" href="%s" target="_blank" rel="nofollow noopener"%s>'
 				. '<span class="aqm-rev-cardtop">'
 				. '<span class="aqm-rev-initials" aria-hidden="true">%s</span>'
 				. '<span class="aqm-rev-cardwho"><span class="aqm-rev-cardname">%s</span>'
